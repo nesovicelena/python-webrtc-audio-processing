@@ -14,14 +14,38 @@ with open('README.md') as f:
     long_description = f.read()
 
 include_dirs = ['src', 'webrtc-audio-processing']
-libraries = ['pthread', 'stdc++']
-define_macros = [
-    ('WEBRTC_LINUX', None),
-    ('WEBRTC_POSIX', None),
-    ('WEBRTC_NS_FLOAT', None),
-    ('WEBRTC_AUDIO_PROCESSING_ONLY_BUILD', None)
-]
-extra_compile_args = ['-std=c++11']
+
+# Platform-specific configuration
+if sys.platform == 'win32':
+    # Windows
+    libraries = []
+    define_macros = [
+        ('WEBRTC_WIN', None),
+        ('WEBRTC_NS_FLOAT', None),
+        ('WEBRTC_AUDIO_PROCESSING_ONLY_BUILD', None),
+        ('NOMINMAX', None),
+    ]
+    extra_compile_args = ['/std:c++14', '/EHsc']
+elif sys.platform == 'darwin':
+    # macOS
+    libraries = ['c++']
+    define_macros = [
+        ('WEBRTC_MAC', None),
+        ('WEBRTC_POSIX', None),
+        ('WEBRTC_NS_FLOAT', None),
+        ('WEBRTC_AUDIO_PROCESSING_ONLY_BUILD', None)
+    ]
+    extra_compile_args = ['-std=c++11']
+else:
+    # Linux and other POSIX systems
+    libraries = ['pthread', 'stdc++']
+    define_macros = [
+        ('WEBRTC_LINUX', None),
+        ('WEBRTC_POSIX', None),
+        ('WEBRTC_NS_FLOAT', None),
+        ('WEBRTC_AUDIO_PROCESSING_ONLY_BUILD', None)
+    ]
+    extra_compile_args = ['-std=c++11']
 
 ap_sources = []
 ap_dir_prefix = 'webrtc-audio-processing/webrtc/'
@@ -38,6 +62,14 @@ if rw_lock_generic_path in ap_sources:
 if condition_variable_path in ap_sources:
     ap_sources.remove(condition_variable_path)
 
+# Filter out platform-specific files
+if sys.platform != 'win32':
+    # Exclude Windows-specific files on non-Windows platforms
+    ap_sources = [src for src in ap_sources if '_win.' not in src and '_win_' not in src]
+else:
+    # Exclude POSIX-specific files on Windows
+    ap_sources = [src for src in ap_sources if '_posix.' not in src and '_posix_' not in src]
+
 def get_yocto_var(var_name):
     val = os.environ.get(var_name, None)
     if val is None:
@@ -45,30 +77,28 @@ def get_yocto_var(var_name):
     return val
 
 def process_arch(arch, set_compile_flags=False):
-    global ap_sources, define_macros
-    if arch.find('arm') >= 0:
-        ap_sources = [src for src in ap_sources if src.find('mips.') < 0 and src.find('sse') < 0]
-        define_macros.append(('WEBRTC_HAS_NEON', None))
-        if arch.find('arm64') >= 0:
-            define_macros.remove(('WEBRTC_LINUX', None))
-            define_macros.append(('WEBRTC_MAC', None))
-            define_macros.append(('WEBRTC_ARCH_ARM64', None))
-            define_macros.append(('WEBRTC_CLOCK_TYPE_REALTIME', None))
-            extra_compile_args.clear()
-        else:
-            if set_compile_flags:
-                extra_compile_args.append('-mfloat-abi=hard')
-                extra_compile_args.append('-mfpu=neon')
-    elif arch.find('aarch64') >= 0:
+    global ap_sources, define_macros, extra_compile_args
+    if arch.find('arm') >= 0 or arch.find('aarch64') >= 0:
+        # ARM-based (includes Apple Silicon M1/M2/M3)
         ap_sources = [src for src in ap_sources if src.find('mips.') < 0 and src.find('sse') < 0]
         define_macros.append(('WEBRTC_HAS_NEON', None))
         define_macros.append(('WEBRTC_ARCH_ARM64', None))
-    elif arch.find('x86') >= 0:
+        if sys.platform == 'darwin':
+            # Apple Silicon Mac
+            define_macros.append(('WEBRTC_CLOCK_TYPE_REALTIME', None))
+        elif arch.find('arm') >= 0 and arch.find('arm64') < 0:
+            # 32-bit ARM (not arm64)
+            if set_compile_flags and sys.platform != 'win32':
+                extra_compile_args.append('-mfloat-abi=hard')
+                extra_compile_args.append('-mfpu=neon')
+    elif arch.find('x86') >= 0 or arch.find('AMD64') >= 0 or arch.find('i386') >= 0 or arch.find('i686') >= 0:
+        # x86/x64 architecture
         ap_sources = [src for src in ap_sources if src.find('mips.') < 0 and src.find('neon.') < 0]
     elif arch.find('mips') >= 0:
         ap_sources = [src for src in ap_sources if src.find('mips.') < 0 and src.find('neon.') < 0]
     else:
-        raise Exception('Unsupported arch: %s' % arch)
+        # Unknown arch - try to continue with x86-like filtering
+        ap_sources = [src for src in ap_sources if src.find('mips.') < 0 and src.find('neon.') < 0]
 
 if 'BITBAKE_BUILD' in os.environ:
     print('Building with bitbake build system')
@@ -116,19 +146,18 @@ setup(
         'Development Status :: 2 - Pre-Alpha',
         'License :: OSI Approved :: BSD License',
         'Operating System :: POSIX :: Linux',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.6',
-        'Programming Language :: Python :: 2.7',
+        'Operating System :: MacOS :: MacOS X',
+        'Operating System :: Microsoft :: Windows',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.2',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
         'Programming Language :: C++'
     ],
     license='BSD',
     keywords=['webrtc audioprocessing', 'voice activity detection', 'noise suppression', 'automatic gain control'],
-    platforms=['Linux'],
+    platforms=['Linux', 'MacOS', 'Windows'],
     package_dir={
         'webrtc_audio_processing': 'src'
     },
